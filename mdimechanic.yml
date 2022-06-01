@@ -13,6 +13,9 @@ docker:
     - pip install cmake
     - pip install pymdi
     - pip install mpi4py
+    - pip install qcengine
+    - pip install qcelemental
+    - pip install networkx
 
     # Install ftnchek
     - wget ftnchek-3.3.1.tar.gz https://www.dsm.fordham.edu/~ftnchek/download/ftnchek-3.3.1.tar.gz || true
@@ -43,7 +46,9 @@ docker:
     - export GCC_MAJOR_VERSION=`gcc --version | grep ^gcc | sed 's/gcc (.*) //g' | grep -o '[0-9]\{1,3\}\.[0-9]\{0,3\}\.[0-9]\{0,3\}' | cut -d '.' -f 1`
     - export GCC_MINOR_VERSION=`gcc --version | grep ^gcc | sed 's/gcc (.*) //g' | grep -o '[0-9]\{1,3\}\.[0-9]\{0,3\}\.[0-9]\{0,3\}' | cut -d '.' -f 2`
     - export NUM_CPU_CORES=`grep -c ^processor /proc/cpuinfo`
-    - python bin/create-install-info.py --fortran_version ${GCC_MAJOR_VERSION}.${GCC_MINOR_VERSION} --mdi --mpich --mpi --mpi_path /usr/lib/x86_64-linux-gnu/mpich
+    #- python bin/create-install-info.py --fortran_version ${GCC_MAJOR_VERSION}.${GCC_MINOR_VERSION} --mdi --mpich --mpi --mpi_path /usr/lib/x86_64-linux-gnu/mpich
+    #- python bin/create-install-info.py --fortran_version ${GCC_MAJOR_VERSION}.${GCC_MINOR_VERSION} --mpich --mpi --mpi_path /usr/lib/x86_64-linux-gnu/mpich
+    - python bin/create-install-info.py --fortran_version ${GCC_MAJOR_VERSION}.${GCC_MINOR_VERSION} --sockets
 
     # Generate the Makefile
     - export builddir=$(pwd)
@@ -52,28 +57,32 @@ docker:
     - echo "GMS_BUILD_PATH = ${builddir}" >> Makefile
     - echo "GMS_FC = gfortran" >> Makefile
     - echo "GMS_CC = gcc" >> Makefile
-    - echo "GMS_MDI = true" >> Makefile
-    - export GMS_MDI=true
+    #- echo "GMS_MDI = true" >> Makefile
+    #- export GMS_MDI=true
     - echo 'include $(GMS_PATH)/Makefile.in' >> Makefile
 
     # Build the MDI Library
-    - ./tools/mdi/download-mdi.csh
-    - make -j $NUM_CPU_CORES libmdi
+    #- ./tools/mdi/download-mdi.csh
+    #- make -j $NUM_CPU_CORES libmdi
 
     # Build DDI
-    - make -j 1 ddi
+    - make -j 4 ddi
 
     # Build GAMESS
-    - make -j 1
+    - make -j 4
 
     # Set path options in rungms
-    - sed -i 's/set SCR=\/scr1\/$USER/set SCR=\/repo\/tests\/scratch/g' /repo/build/gamess/rungms
-    - sed -i 's/set USERSCR=~\/gamess-devv/set USERSCR=\/repo\/tests\/scratch\/userscr/g' /repo/build/gamess/rungms
-    - sed -i 's/set GMSPATH=~\/gamess-devv/set GMSPATH=\/repo\/build\/gamess/g' /repo/build/gamess/rungms
+    - sed -i 's/set SCR=.*/set SCR=.\//g' /repo/build/gamess/rungms
+    - sed -i 's/set USERSCR=.*/set USERSCR=.\//g' /repo/build/gamess/rungms
+    - sed -i 's/set GMSPATH=.*/set GMSPATH=\/repo\/build\/gamess/g' /repo/build/gamess/rungms
 
     # Set MPI options for rungms
-    - sed -i 's/set TARGET=sockets/set TARGET=mpi/g' /repo/build/gamess/rungms
-    - sed -i 's/set DDI_MPI_CHOICE=impi/set DDI_MPI_CHOICE=mpich/g' /repo/build/gamess/rungms
+    #- sed -i 's/set TARGET=sockets\/set/TARGET=mpi/g' /repo/build/gamess/rungms
+    #- sed -i 's/set TARGET=.*/set TARGET=mpi/g' /repo/build/gamess/rungms
+    - sed -i 's/set TARGET=.*/set TARGET=sockets/g' /repo/build/gamess/rungms
+    #- sed -i 's/set DDI_MPI_CHOICE=impi/set DDI_MPI_CHOICE=mpich/g' /repo/build/gamess/rungms
+    - sed -i 's/set DDI_MPI_CHOICE=.*/set DDI_MPI_CHOICE=mpich/g' /repo/build/gamess/rungms
+    #- sed -i 's/set DDI_MPI_CHOICE=.*/set DDI_MPI_CHOICE=impi/g' /repo/build/gamess/rungms
 
     # Run FTNCHEK to check for any errors in the MDI code
     #- echo "=================== CHECKGMS OUTPUT ==================="
@@ -97,16 +106,16 @@ docker:
     - cd /repo
     - |
       if [ ! -d "build/lammps" ]; then
-        git clone https://github.com/lammps/lammps.git --branch mdi-expand build/lammps
+        git clone https://github.com/lammps/lammps.git build/lammps
       fi
     - LAMMPS_INSTALL='mpi'
-  
+
     # Build LAMMPS
     - cd build
     - mkdir -p lammps/build
     - cd lammps/build
     - cmake -D PKG_RIGID=yes -D PKG_MOLECULE=yes -D PKG_KSPACE=yes -D PKG_MDI=yes -D BUILD_SHARED_LIBS=yes -D LAMMPS_MACHINE=mpi ../cmake
-    - make
+    - make -j 4
     - cp lmp_mpi lmp_mdi
     - cp liblammps_mpi.so liblammps.so
 
@@ -162,14 +171,92 @@ engine_tests:
     - cd tests/validate_engine
     - mpiexec -n 1 csh -e ../../build/gamess/rungms -mdi "${MDI_OPTIONS}" TEST.inp 00 2 2 > TEST.log 2> TEST.err
 
-test_drivers:
-  mytest:
-    script:
-      - cd tests/drivers/mytest
-      - python mytest.py
+run_scripts:
 
-      # Output data from the engine
-      #- cd ../../../tests/validate_engine
-      #- echo "==================== ENGINE OUTPUT ===================="
-      #- cat TEST.log
-      #- echo "======================================================="
+  test:
+    containers:
+      container1:
+        image: 'mdi/gcmc'
+        script:
+          #- |
+          #  if [ -d "tests/scratch" ] ; then
+          #    rm -r tests/scratch
+          #  fi
+          #- mkdir -p tests/scratch
+          #- mkdir -p tests/scratch/userscr
+          
+          # Install a custom QCEngine
+          #- cd /repo/build/QCEngine
+          #- pip install .
+          #- cd /repo
+
+          #- mkdir -p /repo/build/tmp
+          - export PATH="${PATH}:/repo/build/gamess/"
+          - export GMSPATH=/repo/build/gamess/
+          #- export USERSCR=/repo/build/tmp
+          #- export SCR=/repo/build/tmp
+          ##- python -c "import qcengine as qcng; qcng.get_program('gamess')"
+          ##- qcengine info
+          - cd tests/gms-qcengine
+          - rm -rf work
+          - mkdir work
+          - cp run.py work
+          - cd work
+          - python run.py
+
+
+  manual:
+    containers:
+      container1:
+        image: 'mdi/gcmc'
+        script:
+          #- echo "Insert code that will confirm that your code has been built successfully"
+          #- export USER=MDIMECHANIC
+          #- |
+          #  if [ -d "tests/scratch" ] ; then
+          #    rm -r tests/scratch
+          #  fi
+          #- mkdir -p tests/scratch
+          #- mkdir -p tests/scratch/userscr
+
+          # These files are created to ensure that the rungms script doesn't return a non-zero exit code
+          #- cd tests/scratch
+          #- touch run-mdi.cube
+          #- touch run-mdi.grd
+          #- touch run-mdi.csv
+          #- cd ../../
+
+          - cd tests/gms-qcengine
+          - rm -rf work
+          - mkdir work
+          - cp run.inp work
+          - cd work
+          #- mpiexec -n 1 csh /repo/build/gamess/rungms run.inp 00 2 2 > run.log 2> run.err
+          #- /repo/build/gamess/rungms run.inp 00 2 2 > run.log 2> run.err
+          - /repo/build/gamess/rungms run.inp 00 2 2
+
+
+  validate_engine:
+    containers:
+      container1:
+        image: 'mdi/gcmc'
+        script:
+          - echo "Insert code that will confirm that your code has been built successfully"
+          #- export USER=MDIMECHANIC
+          - |
+            if [ -d "tests/scratch" ] ; then
+              rm -r tests/scratch
+            fi
+          - mkdir -p tests/scratch
+          - mkdir -p tests/scratch/userscr
+
+          # These files are created to ensure that the rungms script doesn't return a non-zero exit code
+          - cd tests/scratch
+          - touch TEST-mdi.cube
+          - touch TEST-mdi.grd
+          - touch TEST-mdi.csv
+          - cd ../../
+
+          - cd tests/validate_engine
+          - mpiexec -n 1 csh -e ../../build/gamess/rungms TEST.inp 00 2 2 > TEST.log 2> TEST.err
+
